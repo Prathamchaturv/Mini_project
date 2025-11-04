@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home Security Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/static/css/style.css" rel="stylesheet">
+  <link href="/static/css/additional.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- Bootstrap JS (bundle includes Popper) -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Helper functions
+    function formatDate(dateStr) {
+      return new Date(dateStr).toLocaleString();
+    }
+    
+    function getPriorityClass(priority) {
+      switch(priority.toLowerCase()) {
+        case 'high': return 'danger';
+        case 'normal': return 'warning';
+        case 'low': return 'success';
+        default: return 'secondary';
+      }
+    }
+
+    function showFullImage(src) {
+      Swal.fire({
+        imageUrl: src,
+        imageAlt: 'Alert Image',
+        width: 'auto',
+        showConfirmButton: false,
+        background: '#000000dd',
+        customClass: {
+          container: 'image-popup-container'
+        }
+      });
+    }
+
+    async function handleAlert(alertId, action) {
+      try {
+        const response = await fetch(`/api/alerts/${alertId}/${action}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Success',
+          text: `Alert ${action}d successfully`,
+          timer: 2000,
+          showConfirmButton: false
+        });
+
+        setTimeout(() => {
+          location.reload();
+        }, 2000);
+
+      } catch (error) {
+        console.error('Error:', error);
+        Swal.fire({
+          icon: 'error',
+          title: 'Error',
+          text: `Failed to ${action} alert. Please try again.`,
+        });
+      }
+    }
+
+    function updateDashboardStats() {
+      fetch('/api/stats')
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('total-alerts').textContent = data.total_alerts;
+          document.getElementById('high-priority').textContent = data.high_priority;
+          document.getElementById('response-time').textContent = 
+            data.avg_response_time ? `${data.avg_response_time}s` : 'N/A';
+        })
+        .catch(error => console.error('Error updating stats:', error));
+    }
+    
+    function filterAlerts() {
+      const priority = document.getElementById('priorityFilter').value;
+      const alerts = document.querySelectorAll('.alert-card');
+      
+      alerts.forEach(alert => {
+        if (priority === 'all') {
+          alert.style.display = 'block';
+        } else {
+          const alertPriority = alert.classList.contains(`priority-${priority}`) ? priority : 'other';
+          alert.style.display = alertPriority === priority ? 'block' : 'none';
+        }
+      });
+    }
+
+    async function refreshAlerts() {
+      try {
+        const loadingToast = Swal.fire({
+          title: 'Refreshing...',
+          allowOutsideClick: false,
+          showConfirmButton: false,
+          willOpen: () => {
+            Swal.showLoading();
+          }
+        });
+
+        const response = await fetch('/api/alerts');
+        if (!response.ok) throw new Error('Failed to fetch alerts');
+        
+        const data = await response.json();
+        updateDashboardStats();
+        
+        const alertsList = document.querySelector('.alert-list');
+        alertsList.innerHTML = ''; // Clear existing alerts
+        
+        data.alerts.forEach(alert => {
+          // Create new alert card (implementation depends on your alert structure)
+          const alertCard = createAlertCard(alert);
+          alertsList.appendChild(alertCard);
+        });
+
+        loadingToast.close();
+        Swal.fire({
+          icon: 'success',
+          title: 'Alerts Updated',
+          showConfirmButton: false,
+          timer: 1500
+        });
+
+      } catch (error) {
+        console.error('Error refreshing alerts:', error);
+        Swal.fire({
+          icon: 'error',
+          title: 'Refresh Failed',
+          text: 'Could not refresh alerts. Please try again.',
+          showConfirmButton: true
+        });
+      }
+    }
+
+    function createAlertCard(alert) {
+      const card = document.createElement('div');
+      card.className = `alert-card priority-${alert.priority.toLowerCase()}`;
+      // Accessibility: make each generated alert a list item and keyboard-focusable
+      card.setAttribute('role', 'listitem');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('aria-label', `Alert: ${alert.message ? alert.message.substring(0,80) : 'Security alert'}`);
+
+      card.innerHTML = `
+        <div class="alert-header">
+          <div class="alert-meta">
+            <div class="time">🕒 ${formatDate(alert.time)}</div>
+            ${alert.model_type ? 
+              `<div class="model-badge">${alert.model_type} (${(alert.confidence * 100).toFixed(1)}%)</div>` 
+              : ''}
+          </div>
+          <div class="alert-priority">
+            <span class="alert-badge badge-${alert.priority.toLowerCase()}">
+              ${alert.priority.toUpperCase()}
+            </span>
+          </div>
+        </div>
+
+        ${alert.image ? 
+          `<div class="alert-image-container">
+            <img src="/${alert.image}" alt="Alert image" class="alert-image" onclick="showFullImage(this.src)">
+          </div>`
+          : ''}
+
+        <div class="alert-content">
+          <div class="msg">${alert.message}</div>
+          ${alert.detections ? 
+            `<div class="detections">
+              ${alert.detections.map(det => `
+                <div class="detection" 
+                     title="${det.label}: ${(det.confidence * 100).toFixed(1)}%"
+                     data-bs-toggle="tooltip">
+                  <span class="chip label">${det.label}</span>
+                  <span class="chip confidence">${Math.round(det.confidence * 100)}%</span>
+                </div>
+              `).join('')}
+            </div>`
+            : ''}
+        </div>
+
+        <div class="alert-actions">
+          <button onclick="handleAlert('${alert.id}', 'acknowledge')" class="btn btn-success btn-sm">
+            <span class="icon">✓</span> Acknowledge
+          </button>
+          <button onclick="handleAlert('${alert.id}', 'dismiss')" class="btn btn-danger btn-sm">
+            <span class="icon">×</span> Dismiss
+          </button>
+        </div>
+      `;
+      
+      return card;
+    }
+
+    // Auto-refresh dashboard every 30 seconds
+    setInterval(refreshAlerts, 30000);
+
+    // Dashboard functionality - initialize once DOM is ready
+    document.addEventListener('DOMContentLoaded', function() {
+      // Initialize tooltips safely (only if bootstrap is available)
+      try {
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+          return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+      } catch (e) {
+        // bootstrap may not be loaded in some test environments; ignore
+        console.warn('Bootstrap tooltips not initialized:', e);
+      }
+
+      // Handle potion form submit via AJAX
+      const form = document.querySelector('#potion-form');
+      if (form) {
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const input = form.querySelector('input[name="potion_value"]');
+          const btn = form.querySelector('button[type="submit"]');
+          btn.disabled = true;
+          
+          try {
+            const resp = await fetch('/set-potion/', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+              body: new URLSearchParams(new FormData(form))
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            
+            btn.textContent = 'Saved!';
+            setTimeout(() => { btn.textContent = 'Apply'; btn.disabled = false; }, 1000);
+          } catch (err) {
+            console.error('Failed to save:', err);
+            btn.textContent = 'Error, try again';
+            setTimeout(() => { btn.textContent = 'Apply'; btn.disabled = false; }, 2000);
+          }
+        });
+      }
+      // Wire AI model controls to server
+  const modelSelect = document.getElementById('model-type');
+  const confidenceSlider = document.getElementById('confidence');
+  const confidenceValue = document.querySelector('.confidence .value');
+
+      function updateConfidenceLabel() {
+        confidenceValue.textContent = confidenceSlider.value + '%';
+      }
+
+      if (confidenceSlider) {
+        confidenceSlider.addEventListener('input', updateConfidenceLabel);
+        updateConfidenceLabel();
+      }
+
+      // Fetch current model status and set controls
+      async function fetchModelStatus() {
+        try {
+          const res = await fetch('/model-status/');
+          if (!res.ok) return;
+          const j = await res.json();
+          if (j.model_type) modelSelect.value = j.model_type;
+          if (j.confidence != null) confidenceSlider.value = Math.round(j.confidence * 100);
+          updateConfidenceLabel();
+        } catch (err) {
+          console.warn('Could not fetch model status:', err);
+        }
+      }
+
+      fetchModelStatus();
+
+      // Apply model selection to server when user changes it
+      const applyModel = async () => {
+        try {
+          const form = new URLSearchParams();
+          form.append('model_type', modelSelect.value);
+          form.append('confidence', (confidenceSlider.value / 100).toString());
+          await fetch('/set-model/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: form
+          });
+          // reload page to show status and ensure settings persisted
+          location.reload();
+        } catch (err) {
+          console.error('Failed to set model:', err);
+        }
+      };
+
+      modelSelect.addEventListener('change', applyModel);
+      confidenceSlider.addEventListener('change', applyModel);
+
+      // Update model badge periodically and on status fetch
+      async function updateModelBadge() {
+        try {
+          const res = await fetch('/model-status/');
+          if (!res.ok) return;
+          const j = await res.json();
+          const badge = document.getElementById('model-badge');
+          if (!badge) return;
+          if (!j.model_type) {
+            badge.textContent = 'Model: — (none)';
+            badge.style.background = '#eee';
+            badge.style.color = '#333';
+          } else {
+            const avail = j.available ? 'OK' : 'Unavailable';
+            badge.textContent = `Model: ${j.model_type} ${avail} (${Math.round((j.confidence||0)*100)}%)`;
+            badge.style.background = j.available ? '#d1f7d1' : '#ffd6d6';
+            badge.style.color = j.available ? '#073' : '#700';
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      fetchModelStatus().then(updateModelBadge);
+      setInterval(updateModelBadge, 5000);
+    });
+    // Theme toggle helpers
+    (function() {
+      function applyTheme(theme) {
+        if (theme === 'dark') {
+          document.documentElement.setAttribute('data-theme', 'dark');
+          const btn = document.getElementById('theme-toggle');
+          if (btn) { btn.textContent = '☀️'; btn.setAttribute('aria-pressed','true'); }
+        } else {
+          document.documentElement.removeAttribute('data-theme');
+          const btn = document.getElementById('theme-toggle');
+          if (btn) { btn.textContent = '🌙'; btn.setAttribute('aria-pressed','false'); }
+        }
+        // brief page-wide fade to make theme change feel smoother
+        document.documentElement.classList.add('theme-fade');
+        setTimeout(() => { document.documentElement.classList.remove('theme-fade'); }, 320);
+      }
+
+      function setThemeLabel(text) {
+        const lbl = document.getElementById('theme-mode-label');
+        if (!lbl) return;
+        lbl.textContent = text;
+      }
+
+        // Apply saved theme on load; if none saved, follow system preference and show 'System'
+        try {
+          const saved = localStorage.getItem('dashboard-theme');
+          if (saved === 'dark') { applyTheme('dark'); setThemeLabel('Dark'); }
+          else if (saved === 'light') { applyTheme('light'); setThemeLabel('Light'); }
+          else {
+            const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            applyTheme(prefersDark ? 'dark' : 'light');
+            setThemeLabel('System');
+          }
+        } catch (e) {
+          // ignore localStorage errors
+        }
+
+      // Attach listener when DOM is ready (button may exist)
+      document.addEventListener('DOMContentLoaded', () => {
+        const t = document.getElementById('theme-toggle');
+        if (!t) return;
+        // Click toggles between light and dark and saves preference
+        t.addEventListener('click', () => {
+          const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+          const next = isDark ? 'light' : 'dark';
+          applyTheme(next === 'dark' ? 'dark' : 'light');
+          try { localStorage.setItem('dashboard-theme', next); } catch (e) {}
+          setThemeLabel(next === 'dark' ? 'Dark' : 'Light');
+        });
+        // Double-click clears saved preference and follows system again
+        t.addEventListener('dblclick', () => {
+          try { localStorage.removeItem('dashboard-theme'); } catch (e) {}
+          const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          applyTheme(prefersDark ? 'dark' : 'light');
+          setThemeLabel('System');
+          // small feedback: briefly flash the button
+          t.style.transform = 'scale(0.96)';
+          setTimeout(() => { t.style.transform = ''; }, 160);
+        });
+      });
+    })();
+  </script>
+</head>
+<body>
+  <header role="banner">
+    <div class="brand">
+      <div class="logo">SH</div>
+      <div>
+        <h1>Smart Home Security</h1>
+        <div class="subtitle">AI-Powered Intrusion Alerts</div>
+      </div>
+    </div>
+    <div class="subtitle">Secure Web Dashboard for intuitive user control</div>
+    <div class="header-controls">
+      <button id="theme-toggle" class="btn btn-secondary" aria-pressed="false" aria-label="Toggle theme">🌙</button>
+      <span id="theme-mode-label" class="theme-label" aria-live="polite" title="Theme mode">System</span>
+    </div>
+  </header>
+
+  <div class="container" role="main">
+    <div class="grid">
+      <div class="dashboard-header">
+        <h2>System Overview</h2>
+        <div class="stats-grid">
+          <div class="stats-card">
+            <h3>Total Alerts</h3>
+            <p id="total-alerts" class="stats-value">{{ total_alerts }}</p>
+          </div>
+          <div class="stats-card">
+            <h3>High Priority</h3>
+            <p id="high-priority" class="stats-value">{{ high_priority }}</p>
+          </div>
+          <div class="stats-card">
+            <h3>Avg Response</h3>
+            <p id="response-time" class="stats-value">{{ avg_response_time }}s</p>
+          </div>
+        </div>
+      </div>
+
+  <section class="alerts" role="region" aria-label="Recent Alerts">
+        <div class="section-header">
+          <h2>Recent Alerts</h2>
+          <div class="alert-filters">
+            <select id="priorityFilter" 
+                    class="form-select form-select-sm" 
+                    onchange="filterAlerts()" 
+                    aria-label="Filter alerts by priority">
+              <option value="all">All Priorities</option>
+              <option value="high">High Priority</option>
+              <option value="normal">Normal Priority</option>
+              <option value="low">Low Priority</option>
+            </select>
+            <button onclick="refreshAlerts()" class="btn btn-primary btn-sm">
+              <span class="icon">🔄</span> Refresh
+            </button>
+          </div>
+        </div>
+        {% if alerts %}
+  <div class="alert-list" role="list" aria-live="polite">
+          {% for alert in alerts %}
+            <div class="alert-card priority-{{ alert.priority|lower|default('normal') }}" role="listitem" tabindex="0" aria-label="Alert: {{ alert.message[:80] }}">
+              <div class="alert-header">
+                <div class="alert-meta">
+                  <div class="time">🕒 {{ alert.time }}</div>
+                  {% if alert.model_type %}
+                    <div class="model-badge">{{ alert.model_type }} ({{ "%.1f"|format((alert.confidence or 0)*100) }}%)</div>
+                  {% endif %}
+                </div>
+                <div class="alert-priority">
+                  <span class="alert-badge badge-{{ alert.priority|lower|default('normal') }}">
+                    {{ alert.priority|default('Normal')|upper }}
+                  </span>
+                </div>
+              </div>
+
+              {% if alert.image %}
+                <div class="alert-image-container">
+                  <img src="/{{ alert.image }}" alt="Alert image" class="alert-image" onclick="showFullImage(this.src)">
+                </div>
+              {% endif %}
+
+              <div class="alert-content">
+                <div class="msg">{{ alert.message }}</div>
+                {% if alert.detections %}
+                  <div class="detections">
+                    {% for det in alert.detections %}
+                      <div class="detection" 
+                           title="{{ det.label }}: {{ "%.1f"|format(det.confidence*100) }}%"
+                           data-bs-toggle="tooltip">
+                        <span class="chip label">{{ det.label }}</span>
+                        <span class="chip confidence">{{ "%.0f"|format(det.confidence*100) }}%</span>
+                      </div>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+
+              <div class="alert-actions">
+                <button onclick="handleAlert('{{ alert.id }}', 'acknowledge')" class="btn btn-success btn-sm">
+                  <span class="icon">✓</span> Acknowledge
+                </button>
+                <button onclick="handleAlert('{{ alert.id }}', 'dismiss')" class="btn btn-danger btn-sm">
+                  <span class="icon">×</span> Dismiss
+                </button>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+        {% else %}
+          <p class="muted">No alerts yet — your system is quiet.</p>
+        {% endif %}
+      </section>
+
+  <aside class="panel" role="complementary" aria-label="Controls">
+        <h3>Controls</h3>
+        <p class="muted">Quick actions and system options.</p>
+
+        <form id="potion-form" class="potion-card" method="post" action="/set-potion/">
+          <div class="potion-header">
+            <strong>Potion</strong>
+            <span class="muted">Smart control</span>
+          </div>
+          <div class="muted">Configure the Potion setting. This is a small example widget — it persists to the DB.</div>
+          <input name="potion_value" class="input" placeholder="Potion value (example)" value="{{ potion_value or '' }}" />
+          <div class="actions">
+            <button type="submit" class="btn">Apply</button>
+          </div>
+        </form>
+
+        <hr class="divider">
+        <div class="ai-controls">
+          <h3>AI Detection</h3>
+          <div class="model-select">
+            <label class="muted">Model:</label>
+            <select id="model-type" class="input" aria-label="AI model selection">
+              <option value="yolo">YOLO</option>
+              <option value="mobilenet">MobileNet-SSD</option>
+              <option value="efficientdet">EfficientDet</option>
+              <option value="stub">Stub (local)</option>
+            </select>
+          </div>
+          <div class="confidence">
+            <label class="muted">Confidence:</label>
+            <input type="range" min="0" max="100" value="50" class="slider" id="confidence" aria-label="Detection confidence slider">
+            <span class="value">50%</span>
+          </div>
+        </div>
+
+        <hr class="divider">
+
+        <div>
+          <div class="muted">System</div>
+          <div class="system">
+              <button class="btn" onclick="location.reload()">Refresh Alerts</button>
+              <div id="model-badge" class="model-badge">Model: —</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <footer role="contentinfo">
+      <div>© 2025 Smart Home Security | Powered by FastAPI</div>
+    </footer>
+  </div>
+</body>
+</html>
