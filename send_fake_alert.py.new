@@ -1,0 +1,67 @@
+import requests
+from PIL import Image, ImageDraw
+import argparse
+import os
+import sys
+
+DEFAULT_URL = "http://127.0.0.1:8000/upload-alert/"
+
+def make_fake_image(path: str):
+    # Create a simple test image with a person silhouette
+    img = Image.new("RGB", (400, 300), color="#2f2f2f")
+    draw = ImageDraw.Draw(img)
+    
+    # Draw a person-like shape
+    x, y = 200, 150  # center
+    # head
+    draw.ellipse([x-20, y-60, x+20, y-20], fill="#808080")
+    # body
+    draw.rectangle([x-30, y-20, x+30, y+60], fill="#808080")
+    # legs
+    draw.rectangle([x-25, y+60, x-5, y+120], fill="#808080")
+    draw.rectangle([x+5, y+60, x+25, y+120], fill="#808080")
+    
+    img.save(path, quality=95)
+
+def send_alert(api_url: str, image_path: str, message: str, model_type: str = 'yolo', confidence: float = 0.5):
+    try:
+        with open(image_path, "rb") as fh:
+            files = {"file": fh}
+            data = {
+                "message": message,
+                "model_type": model_type,
+                "confidence": confidence
+            }
+            resp = requests.post(api_url, data=data, files=files, timeout=15)  # longer timeout for AI
+            resp.raise_for_status()
+        print(f"Fake alert sent using {model_type.upper()}. Refresh your dashboard.")
+        return True
+    except Exception as e:
+        print("Failed to send fake alert:", e)
+        return False
+
+def main():
+    p = argparse.ArgumentParser(description="Send a fake alert to the dashboard API")
+    p.add_argument("--url", default=DEFAULT_URL, help="Full endpoint URL (default: %(default)s)")
+    p.add_argument("--message", default="🚨 Intruder detected (test alert)", help="Alert message")
+    p.add_argument("--model", default="yolo", choices=["yolo", "mobilenet", "efficientdet"],
+                   help="AI model to use for detection")
+    p.add_argument("--confidence", type=float, default=0.5,
+                   help="Detection confidence threshold (0.0-1.0)")
+    p.add_argument("--out", default="fake_intruder.jpg", help="Output image file name")
+    args = p.parse_args()
+
+    make_fake_image(args.out)
+    ok = send_alert(args.url, args.out, args.message, args.model, args.confidence)
+
+    # cleanup
+    try:
+        if os.path.exists(args.out):
+            os.remove(args.out)
+    except Exception:
+        pass
+
+    return 0 if ok else 1
+
+if __name__ == '__main__':
+    sys.exit(main())
